@@ -74,14 +74,8 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
             return False
         try:
             ip = ipaddress.ip_address(ip_str)
-            # is_global covers most public IPs, excludes private, loopback, etc.
-            # However, it returns False for documentation ranges (like 203.0.113.0/24)
-            # which we treat as "public" for VPC-SC purposes (external access)
-            # So we check: is it NOT private, loopback, link-local, or multicast?
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
-                return False
-            # Everything else is treated as public (external) for VPC-SC
-            return True
+            # is_global covers public IPs, excludes private, loopback, etc.
+            return ip.is_global
         except ValueError:
             return False
 
