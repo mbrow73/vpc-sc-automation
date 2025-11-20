@@ -373,6 +373,13 @@ The service account needs these permissions:
   - How routing works
   - Real-world examples
 
+- **[ENTERPRISE_AUDIT_LOG_EXAMPLES.md](./ENTERPRISE_AUDIT_LOG_EXAMPLES.md)** - Real-world audit logs
+  - 8+ realistic enterprise scenarios
+  - Multiple GCP services (BigQuery, Storage, Compute, SQL, Pub/Sub, Dataflow, etc.)
+  - Cross-perimeter violations
+  - Private/public IP scenarios
+  - **Use these for testing!**
+
 ### Migration
 - **[MIGRATION_FROM_OLD_SYSTEM.md](./MIGRATION_FROM_OLD_SYSTEM.md)** - Migration guide
   - What changed from old form-based system
