@@ -34,12 +34,14 @@ jobs:
           import json
           import sys
           import re
+          import os
 
           body = '''${{ github.event.issue.body }}'''
 
           # Look for JSON block containing protoPayload
           if '"protoPayload"' not in body:
-              print("found_log=false", flush=True)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write("found_log=false\n")
               sys.exit(0)
 
           # Try to extract JSON - look for {...} patterns
@@ -47,7 +49,8 @@ jobs:
           matches = re.findall(json_pattern, body)
 
           if not matches:
-              print("found_log=false", flush=True)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write("found_log=false\n")
               sys.exit(0)
 
           # Take the first match and try to parse it
@@ -59,29 +62,44 @@ jobs:
                       # Valid audit log found
                       with open('audit_log.json', 'w') as f:
                           json.dump(data, f, indent=2)
-                      print("found_log=true", flush=True)
-                      print(f"Audit log extracted ({len(match)} bytes)", flush=True)
+                      with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                          f.write(f"found_log=true\n")
+                      print(f"Audit log extracted ({len(match)} bytes)")
                       sys.exit(0)
               except json.JSONDecodeError:
                   continue
 
-          print("found_log=false", flush=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write("found_log=false\n")
           PYSCRIPT
 
       # Install dependencies
       - name: Install Python dependencies
         run: python -m pip install --quiet pyyaml
 
+      # Debug: Check what was extracted
+      - name: Debug extracted log
+        run: |
+          echo "Extracted audit log status:"
+          if [ -f audit_log.json ]; then
+            echo "✓ audit_log.json exists"
+            head -20 audit_log.json
+          else
+            echo "✗ audit_log.json NOT found"
+          fi
+
       # Run audit log processor
       - name: Process audit log
         id: process
         if: steps.extract_log.outputs.found_log == 'true'
         run: |
+          echo "Processing audit log..."
           python3 .github/scripts/audit_log_to_rules.py \
             --audit-log-json "$(cat audit_log.json)" \
             --router-file router.yml \
             --project-cache .github/scripts/vpc_sc_project_cache.json \
             --output rules_result.json
+          echo "Audit log processing complete"
 
       # Check if TLM is required
       - name: Check TLM requirement
