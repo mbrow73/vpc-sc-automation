@@ -63,6 +63,7 @@ body:
         }
         ```
       placeholder: "Paste your full audit log JSON here..."
+    validations:
       required: true
 
   - type: textarea
@@ -79,6 +80,7 @@ body:
         - "Third-party vendor needs to access our Cloud Storage bucket for backups"
         - "Cross-project data pipeline between project A and project B"
       placeholder: "Briefly describe your use case..."
+    validations:
       required: false
 
   - type: checkboxes
@@ -122,4 +124,4 @@ body:
 
         ---
 
-        **Questions?** Check the [VPC SC Audit Log Guide](./docs/AUDIT_LOG_GUIDE.md)
+        **Questions?** Check the [VPC SC Audit Log Guide](./AUDIT_LOG_GUIDE.md)
