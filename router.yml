@@ -1,0 +1,46 @@
+# VPC Service Controls Automation - Router Configuration
+#
+# Maps perimeter names to their target repositories and terraform file locations.
+# This is the CRITICAL configuration that determines where rules are deployed.
+#
+# Update this file with YOUR perimeters and repository URLs.
+
+perimeters:
+  test-perim-a:
+    repo: your-org/test-perim-a-config          # GitHub repo URL (org/repo or full https URL)
+    tfvars_file: terraform.auto.tfvars           # Path to tfvars file in repo
+    accesslevel_file: accesslevel.tf             # Path to access level file in repo
+    policy_id: 123456789                         # VPC SC Policy ID (for reference)
+
+  test-perim-b:
+    repo: your-org/test-perim-b-config
+    tfvars_file: terraform.auto.tfvars
+    accesslevel_file: accesslevel.tf
+    policy_id: 987654321
+
+  # Add more perimeters below as needed
+  # prod-perimeter:
+  #   repo: your-org/prod-perimeter-config
+  #   tfvars_file: terraform.auto.tfvars
+  #   accesslevel_file: accesslevel.tf
+  #   policy_id: 111222333
+
+
+# IMPORTANT NOTES:
+#
+# 1. repo: Can be either "org/repo" or "https://github.com/org/repo"
+#    The system will convert short form to full GitHub URL automatically.
+#
+# 2. tfvars_file: Where VPC SC ingress/egress rules will be appended
+#    Must exist in the target repository.
+#
+# 3. accesslevel_file: Where access level modules will be appended
+#    Must exist in the target repository.
+#
+# 4. policy_id: Your VPC SC policy ID
+#    Find it in Cloud Console under VPC Service Controls
+#    Format: "123456789" (numeric ID)
+#
+# 5. Every perimeter you want to support MUST be listed here.
+#    If a perimeter is missing, rule generation will fail with error:
+#    "Perimeter 'X' not found in router.yml"

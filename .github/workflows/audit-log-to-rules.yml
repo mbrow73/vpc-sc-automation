@@ -1,0 +1,229 @@
+name: Process VPC SC Audit Log
+
+on:
+  issues:
+    types: [opened, edited]
+  repository_dispatch:
+    types: [vpc-sc-audit-log]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  process_audit_log:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Extract audit log JSON from issue body
+      - name: Extract audit log from issue
+        id: extract_log
+        run: |
+          BODY='${{ github.event.issue.body }}'
+
+          # Look for JSON block in issue (between backticks or raw JSON)
+          if echo "$BODY" | grep -q '"protoPayload"'; then
+            # Extract JSON block
+            echo "$BODY" | grep -o '{.*"protoPayload".*}' | head -1 > audit_log.json
+
+            if [ -s audit_log.json ]; then
+              echo "found_log=true" >> $GITHUB_OUTPUT
+              echo "Audit log extracted"
+              head -c 200 audit_log.json
+            else
+              echo "found_log=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "found_log=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Install dependencies
+      - name: Install Python dependencies
+        run: python -m pip install --quiet pyyaml
+
+      # Run audit log processor
+      - name: Process audit log
+        id: process
+        if: steps.extract_log.outputs.found_log == 'true'
+        run: |
+          python3 .github/scripts/audit_log_to_rules.py \
+            --audit-log-json "$(cat audit_log.json)" \
+            --router-file router.yml \
+            --project-cache .github/scripts/test_vpc_sc_cache.json \
+            --output rules_result.json
+
+      # Check if TLM is required
+      - name: Check TLM requirement
+        id: check_tlm
+        if: steps.extract_log.outputs.found_log == 'true'
+        run: |
+          python3 - <<'EOF'
+          import json
+          import os
+
+          with open('rules_result.json') as f:
+              result = json.load(f)
+
+          if 'error' in result and 'TLM ID required' in result.get('error', ''):
+              print("::set-output name=tlm_required::true")
+              print("::set-output name=tlm_reason::" + result.get('reason', 'TLM required'))
+              with open('tlm_needed.txt', 'w') as f:
+                  f.write('true')
+          else:
+              print("::set-output name=tlm_required::false")
+              with open('tlm_needed.txt', 'w') as f:
+                  f.write('false')
+          EOF
+
+      # Comment on issue if TLM is needed
+      - name: Request TLM ID if needed
+        if: steps.check_tlm.outputs.tlm_required == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `⚠️ **TLM ID Required**\n\nThis request needs a TLM ID (it involves third-party access or public IPs).\n\n**Reason:** ${{ steps.check_tlm.outputs.tlm_reason }}\n\nPlease reply with: \`TLM-XXXXX\` (or provide a TLM ID identifier)\n\nOnce you provide the TLM ID, the automation will proceed.`
+            })
+
+      # Label issue if TLM needed
+      - name: Add label if TLM needed
+        if: steps.check_tlm.outputs.tlm_required == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['needs-tlm-id']
+            })
+
+      # Check if TLM ID provided in comments
+      - name: Extract TLM ID from comments
+        id: get_tlm
+        if: steps.check_tlm.outputs.tlm_required == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            let tlmId = null;
+            for (const comment of comments.data) {
+              const match = comment.body.match(/TLM-[A-Z0-9]+/i);
+              if (match) {
+                tlmId = match[0];
+                break;
+              }
+            }
+
+            if (tlmId) {
+              core.setOutput('tlm_id', tlmId);
+              console.log(`Found TLM ID: ${tlmId}`);
+            } else {
+              console.log('No TLM ID found in comments yet');
+            }
+
+      # Re-process with TLM ID if provided
+      - name: Re-process audit log with TLM ID
+        id: process_with_tlm
+        if: steps.check_tlm.outputs.tlm_required == 'true' && steps.get_tlm.outputs.tlm_id
+        run: |
+          python3 .github/scripts/audit_log_to_rules.py \
+            --audit-log-json "$(cat audit_log.json)" \
+            --router-file router.yml \
+            --project-cache .github/scripts/test_vpc_sc_cache.json \
+            --tlm-id "${{ steps.get_tlm.outputs.tlm_id }}" \
+            --output rules_result.json
+
+      # Generate cross-repo PRs
+      - name: Generate cross-repo PRs
+        id: generate_prs
+        if: steps.extract_log.outputs.found_log == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/generate_cross_repo_prs.py \
+            --rules-file rules_result.json \
+            --router-file router.yml \
+            --issue-number ${{ github.event.issue.number }} \
+            --output pr_summary.json
+
+      # Post PR summary to issue
+      - name: Comment with PR links
+        if: steps.extract_log.outputs.found_log == 'true' && steps.generate_prs.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const prSummary = JSON.parse(fs.readFileSync('pr_summary.json', 'utf8'));
+
+            let comment = '## ✅ Rules Generated\n\n';
+            comment += 'VPC SC rules have been auto-generated and PRs created:\n\n';
+
+            if (prSummary.pull_requests) {
+              for (const pr of prSummary.pull_requests) {
+                comment += `- **${pr.perimeter}**: [${pr.title}](${pr.url})\n`;
+                comment += `  - Direction: ${pr.direction}\n`;
+                comment += `  - Service: ${pr.service}\n`;
+              }
+            }
+
+            if (prSummary.summary) {
+              comment += '\n## Summary\n';
+              comment += prSummary.summary + '\n';
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            })
+
+      # Remove TLM-needed label once processed
+      - name: Remove TLM label if resolved
+        if: steps.extract_log.outputs.found_log == 'true' && steps.generate_prs.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              github.rest.issues.removeLabel({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'needs-tlm-id'
+              })
+            } catch (e) {
+              console.log('Label not found or already removed');
+            }
+
+      # Post error comment if something fails
+      - name: Comment with error
+        if: failure() && steps.extract_log.outputs.found_log == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `❌ **Error Processing Audit Log**\n\nSomething went wrong while processing your audit log. Please check the workflow logs for details.`
+            })
