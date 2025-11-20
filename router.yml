@@ -7,13 +7,13 @@
 
 perimeters:
   test-perim-a:
-    repo: your-org/test-perim-a-config          # GitHub repo URL (org/repo or full https URL)
+    repo: https://github.com/mbrow73/test-perim-a-config         # GitHub repo URL (org/repo or full https URL)
     tfvars_file: terraform.auto.tfvars           # Path to tfvars file in repo
     accesslevel_file: accesslevel.tf             # Path to access level file in repo
     policy_id: 123456789                         # VPC SC Policy ID (for reference)
 
   test-perim-b:
-    repo: your-org/test-perim-b-config
+    repo: https://github.com/mbrow73/test-perim-b-config
     tfvars_file: terraform.auto.tfvars
     accesslevel_file: accesslevel.tf
     policy_id: 987654321
