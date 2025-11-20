@@ -1,0 +1,13 @@
+{
+  "last_updated": "2025-11-20T02:00:38.901178Z",
+  "cache_source": "local_test",
+  "note": "For local testing only. In production, use gcloud to populate from GCP API.",
+  "projects": {
+    "1111111111": "test-perim-a",
+    "1111111112": "test-perim-a",
+    "1111111113": "test-perim-a",
+    "2222222222": "test-perim-b",
+    "2222222223": "test-perim-b",
+    "2222222224": "test-perim-b"
+  }
+}

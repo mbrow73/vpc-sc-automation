@@ -1,0 +1,125 @@
+name: VPC SC Audit Log - Auto-Generate Rules
+description: Paste a VPC SC violation audit log to automatically generate rules
+title: "VPC SC: [briefly describe what access you need]"
+labels: ["vpc-sc-audit-log"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # VPC Service Controls Rule Request
+
+        **Don't know VPC SC details?** No problem! Just paste your audit log and we'll figure it out.
+
+        This automation will:
+        - ✅ Extract the perimeter, service, and method
+        - ✅ Determine if this is INGRESS or EGRESS (or both)
+        - ✅ Detect if TLM ID is needed
+        - ✅ Create rules across all affected perimeters
+        - ✅ Generate PRs for network security review
+
+  - type: textarea
+    id: audit_log
+    attributes:
+      label: Cloud Audit Log JSON
+      description: |
+        Paste the full JSON audit log showing the VPC SC violation.
+
+        **How to get your audit log:**
+        1. Go to **Cloud Console → Logging → Logs Explorer**
+        2. Filter for your project and look for `severity: ERROR` or `status.code: 7`
+        3. Click the log entry showing `PERMISSION_DENIED` or `NO_MATCHING_ACCESS_LEVEL`
+        4. Expand the full entry and copy the entire JSON
+        5. Paste it here
+
+        **Example log structure:**
+        ```json
+        {
+          "protoPayload": {
+            "serviceName": "storage.googleapis.com",
+            "methodName": "storage.objects.get",
+            "authenticationInfo": {
+              "principalEmail": "service@project.iam.gserviceaccount.com"
+            },
+            "requestMetadata": {
+              "callerIp": "203.0.113.1"
+            },
+            "metadata": {
+              "securityPolicyInfo": {
+                "servicePerimeterName": "accessPolicies/123/servicePerimeters/prod"
+              },
+              "ingressViolations": [
+                {
+                  "targetResource": "projects/123456789"
+                }
+              ]
+            }
+          },
+          "resource": {
+            "labels": {
+              "project_id": "my-project"
+            }
+          }
+        }
+        ```
+      placeholder: "Paste your full audit log JSON here..."
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What are you trying to do?
+      description: |
+        Brief explanation of the business need.
+
+        This helps network security ops understand the context when reviewing the PR.
+
+        **Examples:**
+        - "DataOps team needs to run nightly BigQuery ETL from our on-premises network"
+        - "Third-party vendor needs to access our Cloud Storage bucket for backups"
+        - "Cross-project data pipeline between project A and project B"
+      placeholder: "Briefly describe your use case..."
+      required: false
+
+  - type: checkboxes
+    id: verification
+    attributes:
+      label: Verification
+      options:
+        - label: I have copied the full JSON audit log (not a screenshot or partial log)
+          required: true
+        - label: I understand that rules will be automatically generated and reviewed before merge
+          required: true
+        - label: I'm aware that a TLM ID may be required (I'll provide it if asked)
+          required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## What Happens Next
+
+        1. **Automated Analysis** (within seconds)
+           - System parses your audit log
+           - Determines perimeters, service, method
+           - Detects if INGRESS/EGRESS rules are needed
+           - Checks if TLM ID is required
+
+        2. **If TLM ID Needed**
+           - Bot will comment asking for it
+           - Just reply with: `TLM-XXXXX`
+           - Automation continues once provided
+
+        3. **Rule Generation**
+           - Terraform HCL generated for all affected perimeters
+           - Cross-repo PRs created (one per perimeter)
+           - Each PR shows exactly what will be added
+
+        4. **Network Security Review**
+           - PRs go to network security team
+           - They review the changes
+           - Merge when approved
+           - Rules take effect immediately
+
+        ---
+
+        **Questions?** Check the [VPC SC Audit Log Guide](./docs/AUDIT_LOG_GUIDE.md)
