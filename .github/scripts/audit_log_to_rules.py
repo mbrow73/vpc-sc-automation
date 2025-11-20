@@ -143,15 +143,16 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
         result["is_public_ip"] = is_public_ip(caller_ip)
 
     # Perimeter from multiple possible sources in metadata
-    metadata = proto.get("metadata", {})
+    # NOTE: metadata is at TOP LEVEL of audit log, not inside protoPayload
+    metadata = audit_log.get("metadata", {})
     perimeter_path = None
 
     # Try new format first (real Google audit logs)
     if "servicePerimeter" in metadata:
         perimeter_path = metadata.get("servicePerimeter", "")
-    # Try old format (simplified/test audit logs)
-    elif "securityPolicyInfo" in metadata:
-        security_policy = metadata.get("securityPolicyInfo", {})
+    # Try old format (simplified/test audit logs) - this would be in protoPayload
+    elif "securityPolicyInfo" in proto:
+        security_policy = proto.get("securityPolicyInfo", {})
         perimeter_path = security_policy.get("servicePerimeterName", "")
 
     if perimeter_path:

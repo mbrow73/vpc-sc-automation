@@ -25,7 +25,7 @@ The system now robustly handles:
       "principalEmail": "bigquery-user@on-prem-corp.com"
     },
     "requestMetadata": {
-      "callerIp": "203.0.113.42",
+      "callerIp": "8.8.4.42",
       "sourceAttributes": {},
       "userAgent": "google-cloud-bigquery/1.25.0"
     },
@@ -57,7 +57,7 @@ The system now robustly handles:
         "ingressFrom": {
           "identityType": "ANY_IDENTITY",
           "identity": "bigquery-user@on-prem-corp.com",
-          "sourceNetwork": "203.0.113.0/24"
+          "sourceNetwork": "8.8.4.0/24"
         },
         "ingressTo": {
           "resource": "projects/1111111111/datasets/public_data",
@@ -79,7 +79,7 @@ The system now robustly handles:
 - Service: BigQuery
 - Method: google.cloud.bigquery.v2.JobService.InsertJob
 - Direction: INGRESS
-- Source: Public IP (203.0.113.42) - EXTERNAL
+- Source: Public IP (8.8.4.42) - EXTERNAL
 - Destination: test-perim-a (project 1111111111)
 - Violation Reason: NETWORK_NOT_IN_SERVICE_PERIMETER_ACCESS_LEVEL
 - **TLM Required**: YES (public IP + INGRESS)
