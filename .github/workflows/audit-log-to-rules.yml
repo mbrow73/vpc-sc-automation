@@ -30,23 +30,43 @@ jobs:
       - name: Extract audit log from issue
         id: extract_log
         run: |
-          BODY='${{ github.event.issue.body }}'
+          python3 - <<'PYSCRIPT'
+          import json
+          import sys
+          import re
 
-          # Look for JSON block in issue (between backticks or raw JSON)
-          if echo "$BODY" | grep -q '"protoPayload"'; then
-            # Extract JSON block
-            echo "$BODY" | grep -o '{.*"protoPayload".*}' | head -1 > audit_log.json
+          body = '''${{ github.event.issue.body }}'''
 
-            if [ -s audit_log.json ]; then
-              echo "found_log=true" >> $GITHUB_OUTPUT
-              echo "Audit log extracted"
-              head -c 200 audit_log.json
-            else
-              echo "found_log=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "found_log=false" >> $GITHUB_OUTPUT
-          fi
+          # Look for JSON block containing protoPayload
+          if '"protoPayload"' not in body:
+              print("found_log=false", flush=True)
+              sys.exit(0)
+
+          # Try to extract JSON - look for {...} patterns
+          json_pattern = r'\{[\s\S]*"protoPayload"[\s\S]*\}'
+          matches = re.findall(json_pattern, body)
+
+          if not matches:
+              print("found_log=false", flush=True)
+              sys.exit(0)
+
+          # Take the first match and try to parse it
+          for match in matches:
+              try:
+                  # Try to parse as JSON
+                  data = json.loads(match)
+                  if 'protoPayload' in data:
+                      # Valid audit log found
+                      with open('audit_log.json', 'w') as f:
+                          json.dump(data, f, indent=2)
+                      print("found_log=true", flush=True)
+                      print(f"Audit log extracted ({len(match)} bytes)", flush=True)
+                      sys.exit(0)
+              except json.JSONDecodeError:
+                  continue
+
+          print("found_log=false", flush=True)
+          PYSCRIPT
 
       # Install dependencies
       - name: Install Python dependencies
@@ -60,7 +80,7 @@ jobs:
           python3 .github/scripts/audit_log_to_rules.py \
             --audit-log-json "$(cat audit_log.json)" \
             --router-file router.yml \
-            --project-cache .github/scripts/test_vpc_sc_cache.json \
+            --project-cache .github/scripts/vpc_sc_project_cache.json \
             --output rules_result.json
 
       # Check if TLM is required
@@ -76,12 +96,12 @@ jobs:
               result = json.load(f)
 
           if 'error' in result and 'TLM ID required' in result.get('error', ''):
-              print("::set-output name=tlm_required::true")
-              print("::set-output name=tlm_reason::" + result.get('reason', 'TLM required'))
+              print("tlm_required=true", file=open(os.environ['GITHUB_OUTPUT'], 'a'))
+              print(f"tlm_reason={result.get('reason', 'TLM required')}", file=open(os.environ['GITHUB_OUTPUT'], 'a'))
               with open('tlm_needed.txt', 'w') as f:
                   f.write('true')
           else:
-              print("::set-output name=tlm_required::false")
+              print("tlm_required=false", file=open(os.environ['GITHUB_OUTPUT'], 'a'))
               with open('tlm_needed.txt', 'w') as f:
                   f.write('false')
           EOF
@@ -149,7 +169,7 @@ jobs:
           python3 .github/scripts/audit_log_to_rules.py \
             --audit-log-json "$(cat audit_log.json)" \
             --router-file router.yml \
-            --project-cache .github/scripts/test_vpc_sc_cache.json \
+            --project-cache .github/scripts/vpc_sc_project_cache.json \
             --tlm-id "${{ steps.get_tlm.outputs.tlm_id }}" \
             --output rules_result.json
 
