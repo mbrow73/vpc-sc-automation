@@ -167,18 +167,35 @@ jobs:
 
             let tlmId = null;
             for (const comment of comments.data) {
-              const match = comment.body.match(/TLM-[A-Z0-9]+/i);
-              if (match) {
+              // Skip comments from bots (only accept human users)
+              if (comment.user.type === 'Bot') {
+                console.log(`Skipping comment from bot: ${comment.user.login}`);
+                continue;
+              }
+
+              // Look for TLM ID pattern, but ensure it's NOT in an example/template
+              // (e.g., skip "Please provide: `TLM-XXXXX`" patterns)
+              const text = comment.body;
+
+              // Skip if comment contains "example" or "template" markers near TLM pattern
+              if (text.match(/TLM-XXXXX/i)) {
+                console.log('Skipping comment with TLM-XXXXX example pattern');
+                continue;
+              }
+
+              // Match standalone TLM IDs (not TLM-XXXXX format, and with actual hex/alphanumeric)
+              const match = text.match(/TLM-([A-F0-9]{4,})/i);
+              if (match && match[1] && !match[1].match(/^X+$/i)) {
                 tlmId = match[0];
+                console.log(`Found TLM ID: ${tlmId} from user: ${comment.user.login}`);
                 break;
               }
             }
 
             if (tlmId) {
               core.setOutput('tlm_id', tlmId);
-              console.log(`Found TLM ID: ${tlmId}`);
             } else {
-              console.log('No TLM ID found in comments yet');
+              console.log('No valid TLM ID found in user comments');
             }
 
       # Re-process with TLM ID if provided
