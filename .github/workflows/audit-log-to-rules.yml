@@ -3,6 +3,8 @@ name: Process VPC SC Audit Log
 on:
   issues:
     types: [opened, edited]
+  issue_comment:
+    types: [created, edited]
   repository_dispatch:
     types: [vpc-sc-audit-log]
 
@@ -214,7 +216,7 @@ jobs:
       # Generate cross-repo PRs
       - name: Generate cross-repo PRs
         id: generate_prs
-        if: steps.extract_log.outputs.found_log == 'true'
+        if: steps.extract_log.outputs.found_log == 'true' && (steps.check_tlm.outputs.tlm_required == 'false' || steps.process_with_tlm.outcome == 'success')
         env:
           GITHUB_TOKEN: ${{ secrets.CROSS_REPO_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
