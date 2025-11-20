@@ -179,7 +179,9 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
                     source_project = project_part
 
     # 3. Try resource.labels.project_id
-    if not source_project:
+    # NOTE: Only use this if we don't have a public IP, because for public IPs,
+    # the resource.labels.project_id refers to the DESTINATION, not the source
+    if not source_project and not result.get("is_public_ip"):
         resource = audit_log.get("resource", {})
         resource_labels = resource.get("labels", {})
         project_id = resource_labels.get("project_id", "")
