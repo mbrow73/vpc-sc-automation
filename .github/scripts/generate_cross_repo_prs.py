@@ -117,21 +117,24 @@ def append_to_tfvars(
         re.DOTALL
     )
 
-    # For now, we'll just append. More sophisticated parsing could be added.
-    lines = []
-
-    # Add existing content if any (but strip trailing newlines)
-    if existing_content.strip():
-        lines.append(existing_content.rstrip())
-        lines.append("")
-
     # Separate rules by direction
     ingress_rules = [r for r in rules if r.get('direction') == 'INGRESS']
     egress_rules = [r for r in rules if r.get('direction') == 'EGRESS']
 
-    # Add ingress policies
+    # MERGE STRATEGY: If existing policies exist, append to them instead of creating new blocks
+
+    result = existing_content.rstrip() if existing_content.strip() else ""
+
+    # Handle INGRESS policies
     if ingress_rules:
-        lines.append("ingress_policies = [")
+        ingress_match = re.search(
+            r'ingress_policies\s*=\s*\[(.*)\]',
+            result,
+            re.DOTALL
+        )
+
+        # Build new ingress rules HCL
+        new_ingress_hcl = []
         for rule in ingress_rules:
             hcl_rule = to_hcl({'from': rule['from'], 'to': rule['to']}, indent=1)
             rule_lines = hcl_rule.split("\n")
@@ -141,15 +144,53 @@ def append_to_tfvars(
                 comment_lines = ["  # " + ln.strip() for ln in justification.split("\n")]
                 rule_lines = [rule_lines[0]] + comment_lines + rule_lines[1:]
 
-            lines.extend(["  " + ln for ln in rule_lines])
-            lines[-1] += ","
-        lines.append("]")
+            new_ingress_hcl.extend(["  " + ln for ln in rule_lines])
 
-    # Add egress policies
+        if ingress_match:
+            # MERGE: Append to existing array
+            existing_content_inner = ingress_match.group(1).rstrip()
+            # Add comma to existing content if it doesn't end with one
+            if existing_content_inner and not existing_content_inner.rstrip().endswith(','):
+                existing_content_inner = existing_content_inner.rstrip() + ','
+
+            # Rebuild the ingress_policies block
+            ingress_content = "ingress_policies = [\n" + existing_content_inner + "\n"
+            for i, line in enumerate(new_ingress_hcl):
+                if i == len(new_ingress_hcl) - 1:
+                    ingress_content += line + ",\n"  # Add comma after last new rule
+                else:
+                    ingress_content += line + "\n"
+            ingress_content += "]"
+
+            # Replace the old ingress_policies block with merged one
+            result = re.sub(
+                r'ingress_policies\s*=\s*\[.*?\]',
+                ingress_content,
+                result,
+                flags=re.DOTALL
+            )
+        else:
+            # CREATE: New ingress_policies block
+            if result:
+                result += "\n\n"
+            result += "ingress_policies = [\n"
+            for i, line in enumerate(new_ingress_hcl):
+                if i == len(new_ingress_hcl) - 1:
+                    result += line + ",\n"
+                else:
+                    result += line + "\n"
+            result += "]"
+
+    # Handle EGRESS policies (similar logic)
     if egress_rules:
-        if ingress_rules:
-            lines.append("")  # Blank line between sections
-        lines.append("egress_policies = [")
+        egress_match = re.search(
+            r'egress_policies\s*=\s*\[(.*)\]',
+            result,
+            re.DOTALL
+        )
+
+        # Build new egress rules HCL
+        new_egress_hcl = []
         for rule in egress_rules:
             hcl_rule = to_hcl({'from': rule['from'], 'to': rule['to']}, indent=1)
             rule_lines = hcl_rule.split("\n")
@@ -159,11 +200,44 @@ def append_to_tfvars(
                 comment_lines = ["  # " + ln.strip() for ln in justification.split("\n")]
                 rule_lines = [rule_lines[0]] + comment_lines + rule_lines[1:]
 
-            lines.extend(["  " + ln for ln in rule_lines])
-            lines[-1] += ","
-        lines.append("]")
+            new_egress_hcl.extend(["  " + ln for ln in rule_lines])
 
-    return "\n".join(lines) + "\n"
+        if egress_match:
+            # MERGE: Append to existing array
+            existing_content_inner = egress_match.group(1).rstrip()
+            # Add comma to existing content if it doesn't end with one
+            if existing_content_inner and not existing_content_inner.rstrip().endswith(','):
+                existing_content_inner = existing_content_inner.rstrip() + ','
+
+            # Rebuild the egress_policies block
+            egress_content = "egress_policies = [\n" + existing_content_inner + "\n"
+            for i, line in enumerate(new_egress_hcl):
+                if i == len(new_egress_hcl) - 1:
+                    egress_content += line + ",\n"
+                else:
+                    egress_content += line + "\n"
+            egress_content += "]"
+
+            # Replace the old egress_policies block with merged one
+            result = re.sub(
+                r'egress_policies\s*=\s*\[.*?\]',
+                egress_content,
+                result,
+                flags=re.DOTALL
+            )
+        else:
+            # CREATE: New egress_policies block
+            if result:
+                result += "\n\n"
+            result += "egress_policies = [\n"
+            for i, line in enumerate(new_egress_hcl):
+                if i == len(new_egress_hcl) - 1:
+                    result += line + ",\n"
+                else:
+                    result += line + "\n"
+            result += "]"
+
+    return result + "\n"
 
 
 def append_access_levels(
