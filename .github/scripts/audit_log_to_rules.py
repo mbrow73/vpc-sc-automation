@@ -189,7 +189,8 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
             source_project = project_id
 
     # 4. Try resourceName in protoPayload
-    if not source_project:
+    # NOTE: For public IP INGRESS, resourceName refers to destination, not source
+    if not source_project and not result.get("is_public_ip"):
         resource_name = proto.get("resourceName", "")
         source_project = extract_project_from_string(resource_name)
 
