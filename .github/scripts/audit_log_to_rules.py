@@ -54,6 +54,12 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract VPC SC violation details from structured audit log.
 
+    Robust extraction that handles:
+    - Multiple GCP services (BigQuery, Storage, Compute, SQL, Pub/Sub, etc.)
+    - Cross-perimeter violations
+    - Complex enterprise scenarios
+    - Various audit log structures
+
     Args:
         audit_log: Parsed audit log JSON
 
@@ -64,16 +70,46 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
 
     def is_public_ip(ip_str: str) -> bool:
         """Check if IP is public (not RFC 1918 private)."""
-        if not ip_str or ip_str.lower() in ["gce-internal-ip", "private"]:
+        if not ip_str or ip_str.lower() in ["gce-internal-ip", "private", ""]:
             return False
         try:
             ip = ipaddress.ip_address(ip_str)
+            # is_global covers public IPs, excludes private, loopback, etc.
             return ip.is_global
         except ValueError:
             return False
 
+    def extract_project_from_string(s: str) -> Optional[str]:
+        """Extract project number from various resource strings."""
+        if not s:
+            return None
+        # Try different patterns
+        patterns = [
+            r'projects/(\d+)',          # projects/123456789
+            r'projects/([a-z0-9-]+)',   # projects/my-project (by ID)
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, s)
+            if match:
+                result = match.group(1)
+                # Return only if it's numeric (project number)
+                if result.isdigit():
+                    return result
+        return None
+
+    def extract_perimeter_from_string(s: str) -> Optional[str]:
+        """Extract perimeter name from resource path."""
+        if not s:
+            return None
+        match = re.search(r'servicePerimeters/([a-zA-Z0-9_-]+)', s)
+        if match:
+            return match.group(1)
+        return None
+
     result = {
         "perimeter": None,
+        "source_perimeter": None,
+        "dest_perimeter": None,
         "service": None,
         "method": None,
         "source_project": None,
@@ -81,67 +117,119 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
         "service_account": None,
         "caller_ip": None,
         "is_public_ip": False,
-        "violation_type": None,  # INGRESS or EGRESS
+        "violation_type": None,  # INGRESS, EGRESS, or BOTH
     }
 
     proto = audit_log.get("protoPayload", {})
 
     # Service and method
-    result["service"] = proto.get("serviceName")
-    result["method"] = proto.get("methodName")
+    result["service"] = proto.get("serviceName", "").lower()
+    result["method"] = proto.get("methodName", "").lower()
 
-    # Service account
+    # Service account / Principal
     auth_info = proto.get("authenticationInfo", {})
     result["service_account"] = auth_info.get("principalEmail")
 
-    # Caller IP
+    # Caller IP - check multiple sources
     request_metadata = proto.get("requestMetadata", {})
     caller_ip = request_metadata.get("callerIp")
+    if not caller_ip:
+        # Try sourceAttributes (newer format)
+        source_attrs = request_metadata.get("sourceAttributes", {})
+        caller_ip = source_attrs.get("sourceIp")
+
     if caller_ip:
         result["caller_ip"] = caller_ip
         result["is_public_ip"] = is_public_ip(caller_ip)
 
-    # Perimeter from metadata
+    # Perimeter from securityPolicyInfo (where violation occurred)
     metadata = proto.get("metadata", {})
     security_policy = metadata.get("securityPolicyInfo", {})
     perimeter_path = security_policy.get("servicePerimeterName", "")
 
     if perimeter_path:
-        match = re.search(r'servicePerimeters/([a-zA-Z0-9_-]+)', perimeter_path)
-        if match:
-            result["perimeter"] = match.group(1)
+        result["perimeter"] = extract_perimeter_from_string(perimeter_path)
 
-    # Source project from callerNetwork
+    # Extract source project from multiple possible locations
+    # Priority: callerNetwork > authentication > principalEmail project > resource labels
+    source_project = None
+
+    # 1. Try callerNetwork (best source)
     caller_network = request_metadata.get("callerNetwork", "")
     if caller_network:
-        match = re.search(r'projects/(\d+)/', caller_network)
-        if match:
-            result["source_project"] = match.group(1)
+        source_project = extract_project_from_string(caller_network)
 
-    # Fallback: use resource project_id label
-    if not result["source_project"]:
+    # 2. Try principalEmail if service account from same project
+    if not source_project and result["service_account"]:
+        # Service account format: name@project-id.iam.gserviceaccount.com
+        if "@" in result["service_account"]:
+            parts = result["service_account"].split("@")
+            if len(parts) > 1:
+                project_part = parts[1].split(".")[0]
+                # Try to extract numeric project number
+                if project_part.isdigit():
+                    source_project = project_part
+
+    # 3. Try resource.labels.project_id
+    if not source_project:
         resource = audit_log.get("resource", {})
         resource_labels = resource.get("labels", {})
         project_id = resource_labels.get("project_id", "")
         if project_id.isdigit():
-            result["source_project"] = project_id
+            source_project = project_id
+
+    # 4. Try resourceName in protoPayload
+    if not source_project:
+        resource_name = proto.get("resourceName", "")
+        source_project = extract_project_from_string(resource_name)
+
+    result["source_project"] = source_project
 
     # Determine violation type and extract destination
     ingress_violations = metadata.get("ingressViolations", [])
     egress_violations = metadata.get("egressViolations", [])
+    access_denial_violations = metadata.get("accessDenialViolations", [])
 
-    if ingress_violations:
+    # Collect all violations
+    violations_present = {
+        "ingress": len(ingress_violations) > 0,
+        "egress": len(egress_violations) > 0,
+        "access_denial": len(access_denial_violations) > 0,
+    }
+
+    # Determine direction
+    if ingress_violations and egress_violations:
+        result["violation_type"] = "BOTH"
+    elif ingress_violations:
         result["violation_type"] = "INGRESS"
-        target_resource = ingress_violations[0].get("targetResource", "")
-        match = re.search(r'projects/(\d+)', target_resource)
-        if match:
-            result["dest_project"] = match.group(1)
     elif egress_violations:
         result["violation_type"] = "EGRESS"
-        target_resource = egress_violations[0].get("targetResource", "")
-        match = re.search(r'projects/(\d+)', target_resource)
-        if match:
-            result["dest_project"] = match.group(1)
+    elif access_denial_violations:
+        # Access denial can be either, default to INGRESS
+        result["violation_type"] = "INGRESS"
+
+    # Extract destination project and perimeter from violations
+    for violation_type, violations in [
+        ("ingress", ingress_violations),
+        ("egress", egress_violations),
+        ("access_denial", access_denial_violations),
+    ]:
+        if violations:
+            target_resource = violations[0].get("targetResource", "")
+            if target_resource:
+                dest_project = extract_project_from_string(target_resource)
+                if dest_project:
+                    result["dest_project"] = dest_project
+
+                # Also try to extract destination perimeter
+                dest_perim = extract_perimeter_from_string(target_resource)
+                if dest_perim:
+                    result["dest_perimeter"] = dest_perim
+
+    # For cross-perimeter scenarios, try to identify both perimeters
+    # If we have targetResource with perimeter info, that's the other perimeter
+    if result["dest_perimeter"] and result["perimeter"]:
+        result["source_perimeter"] = result["perimeter"]
 
     return result
 
@@ -523,17 +611,34 @@ def main() -> None:
     router_config = load_router_config(args.router_file)
     project_cache = load_project_cache(args.project_cache)
 
-    # Determine ownership
-    src_perim = determine_perimeter_ownership(
-        parsed['source_project'],
-        project_cache,
-        router_config
-    )
-    dst_perim = determine_perimeter_ownership(
-        parsed['dest_project'],
-        project_cache,
-        router_config
-    )
+    # Determine ownership (check parsed data first, then projects)
+    # For cross-perimeter scenarios, the audit log may already have perimeter info
+    src_perim = parsed.get('source_perimeter')
+    dst_perim = parsed.get('dest_perimeter')
+
+    # If not in audit log, derive from projects
+    if not src_perim and parsed['source_project']:
+        src_perim = determine_perimeter_ownership(
+            parsed['source_project'],
+            project_cache,
+            router_config
+        )
+
+    if not dst_perim and parsed['dest_project']:
+        dst_perim = determine_perimeter_ownership(
+            parsed['dest_project'],
+            project_cache,
+            router_config
+        )
+
+    # Also use the perimeter from the violation itself (where error occurred)
+    if not src_perim and not dst_perim and parsed.get('perimeter'):
+        # If we don't have source/dest but we have the perimeter where violation occurred,
+        # this is where rules need to be applied
+        if parsed['violation_type'] == 'INGRESS':
+            dst_perim = parsed['perimeter']
+        elif parsed['violation_type'] == 'EGRESS':
+            src_perim = parsed['perimeter']
 
     # Auto-detect direction
     direction_info = auto_detect_direction(src_perim, dst_perim)
