@@ -142,10 +142,17 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
         result["caller_ip"] = caller_ip
         result["is_public_ip"] = is_public_ip(caller_ip)
 
-    # Perimeter from securityPolicyInfo (where violation occurred)
+    # Perimeter from multiple possible sources in metadata
     metadata = proto.get("metadata", {})
-    security_policy = metadata.get("securityPolicyInfo", {})
-    perimeter_path = security_policy.get("servicePerimeterName", "")
+    perimeter_path = None
+
+    # Try new format first (real Google audit logs)
+    if "servicePerimeter" in metadata:
+        perimeter_path = metadata.get("servicePerimeter", "")
+    # Try old format (simplified/test audit logs)
+    elif "securityPolicyInfo" in metadata:
+        security_policy = metadata.get("securityPolicyInfo", {})
+        perimeter_path = security_policy.get("servicePerimeterName", "")
 
     if perimeter_path:
         result["perimeter"] = extract_perimeter_from_string(perimeter_path)
@@ -209,13 +216,52 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
         result["violation_type"] = "INGRESS"
 
     # Extract destination project and perimeter from violations
+    # Handle BOTH new format (nested ingressFrom/To) AND old format (targetResource)
     for violation_type, violations in [
         ("ingress", ingress_violations),
         ("egress", egress_violations),
         ("access_denial", access_denial_violations),
     ]:
         if violations:
-            target_resource = violations[0].get("targetResource", "")
+            violation = violations[0]
+            target_resource = None
+
+            # NEW FORMAT: Real Google audit logs use nested structure
+            if violation_type == "ingress":
+                # Extract from ingressTo.resource
+                ingress_to = violation.get("ingressTo", {})
+                target_resource = ingress_to.get("resource")
+
+                # Also extract source from ingressFrom.sourceResource if available
+                if not result["source_project"]:
+                    ingress_from = violation.get("ingressFrom", {})
+                    source_resource = ingress_from.get("sourceResource")
+                    if source_resource:
+                        src_proj = extract_project_from_string(source_resource)
+                        if src_proj:
+                            result["source_project"] = src_proj
+
+            elif violation_type == "egress":
+                # Extract from egressTo.resource
+                egress_to = violation.get("egressTo", {})
+                target_resource = egress_to.get("resource")
+
+            elif violation_type == "access_denial":
+                # Access denial may have different structure, try both
+                if "ingressTo" in violation:
+                    ingress_to = violation.get("ingressTo", {})
+                    target_resource = ingress_to.get("resource")
+                elif "egressTo" in violation:
+                    egress_to = violation.get("egressTo", {})
+                    target_resource = egress_to.get("resource")
+                else:
+                    # Fallback to targetResource if available
+                    target_resource = violation.get("targetResource", "")
+
+            # If new format didn't work, try old format
+            if not target_resource:
+                target_resource = violation.get("targetResource", "")
+
             if target_resource:
                 dest_project = extract_project_from_string(target_resource)
                 if dest_project:
