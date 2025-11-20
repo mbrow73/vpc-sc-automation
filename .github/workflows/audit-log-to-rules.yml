@@ -128,9 +128,9 @@ jobs:
                   f.write('false')
           EOF
 
-      # Comment on issue if TLM is needed
+      # Comment on issue if TLM is needed (only on initial issue, not on re-trigger via comment)
       - name: Request TLM ID if needed
-        if: steps.check_tlm.outputs.tlm_required == 'true'
+        if: steps.check_tlm.outputs.tlm_required == 'true' && github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
@@ -141,9 +141,9 @@ jobs:
               body: `⚠️ **TLM ID Required**\n\nThis request needs a TLM ID (it involves third-party access or public IPs).\n\n**Reason:** ${{ steps.check_tlm.outputs.tlm_reason }}\n\nPlease reply with: \`TLM-XXXXX\` (or provide a TLM ID identifier)\n\nOnce you provide the TLM ID, the automation will proceed.`
             })
 
-      # Label issue if TLM needed
+      # Label issue if TLM needed (only on initial issue, not on re-trigger via comment)
       - name: Add label if TLM needed
-        if: steps.check_tlm.outputs.tlm_required == 'true'
+        if: steps.check_tlm.outputs.tlm_required == 'true' && github.event_name == 'issues'
         uses: actions/github-script@v7
         with:
           script: |
