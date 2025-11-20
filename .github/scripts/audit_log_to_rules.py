@@ -74,8 +74,14 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
             return False
         try:
             ip = ipaddress.ip_address(ip_str)
-            # is_global covers public IPs, excludes private, loopback, etc.
-            return ip.is_global
+            # is_global covers most public IPs, excludes private, loopback, etc.
+            # However, it returns False for documentation ranges (like 203.0.113.0/24)
+            # which we treat as "public" for VPC-SC purposes (external access)
+            # So we check: is it NOT private, loopback, link-local, or multicast?
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+                return False
+            # Everything else is treated as public (external) for VPC-SC
+            return True
         except ValueError:
             return False
 
@@ -143,15 +149,16 @@ def extract_from_audit_log(audit_log: Dict[str, Any]) -> Dict[str, Any]:
         result["is_public_ip"] = is_public_ip(caller_ip)
 
     # Perimeter from multiple possible sources in metadata
-    metadata = proto.get("metadata", {})
+    # NOTE: metadata is at TOP LEVEL of audit log, not inside protoPayload
+    metadata = audit_log.get("metadata", {})
     perimeter_path = None
 
     # Try new format first (real Google audit logs)
     if "servicePerimeter" in metadata:
         perimeter_path = metadata.get("servicePerimeter", "")
-    # Try old format (simplified/test audit logs)
-    elif "securityPolicyInfo" in metadata:
-        security_policy = metadata.get("securityPolicyInfo", {})
+    # Try old format (simplified/test audit logs) - this would be in protoPayload
+    elif "securityPolicyInfo" in proto:
+        security_policy = proto.get("securityPolicyInfo", {})
         perimeter_path = security_policy.get("servicePerimeterName", "")
 
     if perimeter_path:
