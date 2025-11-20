@@ -693,6 +693,21 @@ def main() -> None:
     direction_info['source_perimeter'] = src_perim
     direction_info['dest_perimeter'] = dst_perim
 
+    # Debug: Log extraction results for troubleshooting
+    import sys
+    debug_info = {
+        'extracted_service': parsed.get('service'),
+        'violation_type_from_log': parsed.get('violation_type'),
+        'source_project': parsed.get('source_project'),
+        'dest_project': parsed.get('dest_project'),
+        'source_perimeter': src_perim,
+        'dest_perimeter': dst_perim,
+        'detected_direction': direction_info.get('direction'),
+        'public_ip': parsed.get('is_public_ip'),
+        'caller_ip': parsed.get('caller_ip'),
+    }
+    print(f"\n📋 DEBUG: Direction Detection\n{json.dumps(debug_info, indent=2)}\n", file=sys.stderr)
+
     # Validate TLM requirement
     tlm_validation = validate_tlm_requirement(parsed, direction_info)
 

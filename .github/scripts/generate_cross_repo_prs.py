@@ -304,6 +304,9 @@ def create_github_branch_and_pr(
     branch_name = f"vpcsc/req-{issue_number}-{perimeter}-{direction_str}"
 
     try:
+        # Save original working directory to restore later
+        original_cwd = os.getcwd()
+
         # STEP 3: Clone the target perimeter repository
         # THIS IS WHERE ROUTING HAPPENS: repo_url comes from router.yml
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -411,6 +414,9 @@ All changes are append-only - no existing configurations are modified or removed
 
                 pr_url = pr_response.stdout.strip()
 
+                # Restore working directory before returning
+                os.chdir(original_cwd)
+
                 return {
                     'perimeter': perimeter,
                     'branch': branch_name,
@@ -422,6 +428,9 @@ All changes are append-only - no existing configurations are modified or removed
                 }
             else:
                 # No token, just report what would be done
+                # Restore working directory before returning
+                os.chdir(original_cwd)
+
                 return {
                     'perimeter': perimeter,
                     'branch': branch_name,
@@ -432,6 +441,12 @@ All changes are append-only - no existing configurations are modified or removed
                 }
 
     except Exception as e:
+        # Restore working directory on error
+        try:
+            os.chdir(original_cwd)
+        except:
+            pass
+
         return {
             'perimeter': perimeter,
             'status': 'error',
