@@ -240,15 +240,17 @@ jobs:
 
             if (prSummary.pull_requests) {
               for (const pr of prSummary.pull_requests) {
-                comment += `- **${pr.perimeter}**: [${pr.title}](${pr.url})\n`;
+                comment += `- **${pr.perimeter}**: [${pr.pr_title}](${pr.pr_url})\n`;
                 comment += `  - Direction: ${pr.direction}\n`;
-                comment += `  - Service: ${pr.service}\n`;
+                comment += `  - Branch: ${pr.branch}\n`;
               }
             }
 
             if (prSummary.summary) {
               comment += '\n## Summary\n';
-              comment += prSummary.summary + '\n';
+              comment += `✅ ${prSummary.summary.message}\n`;
+              comment += `- Total perimeters: ${prSummary.summary.total_perimeters}\n`;
+              comment += `- Successful PRs: ${prSummary.summary.successful_prs}\n`;
             }
 
             github.rest.issues.createComment({
