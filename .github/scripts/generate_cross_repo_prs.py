@@ -121,76 +121,66 @@ def append_to_tfvars(
     ingress_rules = [r for r in rules if r.get('direction') == 'INGRESS']
     egress_rules = [r for r in rules if r.get('direction') == 'EGRESS']
 
-    # Helper: Find matching closing bracket accounting for nested structures
+    # Helper: Find matching closing bracket accounting for nested brackets
     def find_closing_bracket(text: str, start_pos: int) -> int:
-        """Find position of ] that matches [ at start_pos, accounting for nested { }"""
+        """Find position of ] that matches [ at start_pos"""
         if start_pos >= len(text) or text[start_pos] != '[':
             return -1
 
         bracket_depth = 0
-        brace_depth = 0
-        i = start_pos
-        while i < len(text):
-            if text[i] == '{':
-                brace_depth += 1
-            elif text[i] == '}':
-                brace_depth -= 1
-            elif text[i] == '[':
+        for i in range(start_pos, len(text)):
+            if text[i] == '[':
                 bracket_depth += 1
-            elif text[i] == ']' and brace_depth == 0:
+            elif text[i] == ']':
                 bracket_depth -= 1
                 if bracket_depth == 0:
                     return i
-            i += 1
         return -1
 
-    # Helper: Merge new rules into a policy array
-    def merge_into_array(content: str, policy_name: str, new_rule_lines: List[str]) -> str:
-        """Merge new rules into existing policy array, or create new array."""
-        if not new_rule_lines:
+    # Helper: Insert new rules into existing policy array
+    def insert_into_array(content: str, policy_name: str, new_rule_hcl: str) -> str:
+        """Insert new rules before the closing ] of existing array."""
+        if not new_rule_hcl.strip():
             return content
 
-        # Find existing policy array
+        # Find existing policy array: "policy_name = ["
         pattern = rf'{re.escape(policy_name)}\s*=\s*\['
         match = re.search(pattern, content)
 
         if not match:
             # No existing array - create new one
             if content.strip():
-                return content.rstrip() + f"\n\n{policy_name} = [\n" + ",\n".join(new_rule_lines) + ",\n]\n"
+                return content.rstrip() + f"\n\n{policy_name} = [\n{new_rule_hcl},\n]\n"
             else:
-                return f"{policy_name} = [\n" + ",\n".join(new_rule_lines) + ",\n]\n"
+                return f"{policy_name} = [\n{new_rule_hcl},\n]\n"
 
-        # Found existing array - find its closing bracket
+        # Found opening bracket - find its closing bracket
         start_bracket_pos = match.end() - 1
         end_bracket_pos = find_closing_bracket(content, start_bracket_pos)
 
         if end_bracket_pos == -1:
-            # Malformed array - just append new policy at end
+            # Malformed - just append new array
             if content.strip():
-                return content.rstrip() + f"\n\n{policy_name} = [\n" + ",\n".join(new_rule_lines) + ",\n]\n"
+                return content.rstrip() + f"\n\n{policy_name} = [\n{new_rule_hcl},\n]\n"
             else:
-                return f"{policy_name} = [\n" + ",\n".join(new_rule_lines) + ",\n]\n"
+                return f"{policy_name} = [\n{new_rule_hcl},\n]\n"
 
-        # Extract parts: before array, array content, after array
-        before_array = content[:start_bracket_pos + 1]  # Include opening [
-        array_inner = content[start_bracket_pos + 1:end_bracket_pos].rstrip()
-        after_array = content[end_bracket_pos:]  # Include closing ]
+        # Insert before closing bracket
+        # If there's content before the ], add a comma
+        before_close = content[:end_bracket_pos].rstrip()
+        after_close = content[end_bracket_pos:]
 
-        # Build merged array
-        if array_inner.strip():
-            # Has existing content - append new rules
-            merged_inner = array_inner.rstrip(',').rstrip() + ',\n' + ",\n".join(new_rule_lines) + ',\n'
+        if before_close.endswith(']'):
+            # Empty array
+            return before_close + f"\n{new_rule_hcl},\n{after_close}"
         else:
-            # Empty array - just add new rules
-            merged_inner = ',\n'.join(new_rule_lines) + ',\n'
-
-        return before_array + merged_inner + after_array
+            # Has existing content - add comma and new rules
+            return before_close + f",\n{new_rule_hcl},\n{after_close}"
 
     result = existing_content.rstrip() if existing_content.strip() else ""
 
-    # Build HCL lines for each direction
-    ingress_lines = []
+    # Build HCL for each rule (complete blocks with internal formatting)
+    ingress_hcl = []
     for rule in ingress_rules:
         hcl_rule = to_hcl({'from': rule['from'], 'to': rule['to']}, indent=1)
         rule_lines = hcl_rule.split("\n")
@@ -199,9 +189,9 @@ def append_to_tfvars(
             comment_lines = ["  # " + ln.strip() for ln in justification.split("\n")]
             rule_lines = [rule_lines[0]] + comment_lines + rule_lines[1:]
 
-        ingress_lines.append("\n".join(["  " + ln for ln in rule_lines]))
+        ingress_hcl.append("\n".join(["  " + ln for ln in rule_lines]))
 
-    egress_lines = []
+    egress_hcl = []
     for rule in egress_rules:
         hcl_rule = to_hcl({'from': rule['from'], 'to': rule['to']}, indent=1)
         rule_lines = hcl_rule.split("\n")
@@ -210,14 +200,14 @@ def append_to_tfvars(
             comment_lines = ["  # " + ln.strip() for ln in justification.split("\n")]
             rule_lines = [rule_lines[0]] + comment_lines + rule_lines[1:]
 
-        egress_lines.append("\n".join(["  " + ln for ln in rule_lines]))
+        egress_hcl.append("\n".join(["  " + ln for ln in rule_lines]))
 
-    # Merge into result
-    if ingress_lines:
-        result = merge_into_array(result, "ingress_policies", ingress_lines)
+    # Insert into result
+    if ingress_hcl:
+        result = insert_into_array(result, "ingress_policies", ",\n".join(ingress_hcl))
 
-    if egress_lines:
-        result = merge_into_array(result, "egress_policies", egress_lines)
+    if egress_hcl:
+        result = insert_into_array(result, "egress_policies", ",\n".join(egress_hcl))
 
     return result if result.endswith('\n') else result + "\n"
 
