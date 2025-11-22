@@ -31,6 +31,139 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+# Supported VPC Service Controls method restrictions
+# Based on: https://cloud.google.com/vpc-service-controls/docs/supported-method-restrictions
+SUPPORTED_VPC_SC_METHODS = {
+    # BigQuery
+    "bigquery.datasets.create",
+    "bigquery.datasets.get",
+    "bigquery.datasets.list",
+    "bigquery.datasets.update",
+    "bigquery.datasets.delete",
+    "bigquery.datasets.getIamPolicy",
+    "bigquery.datasets.setIamPolicy",
+    "bigquery.tables.create",
+    "bigquery.tables.get",
+    "bigquery.tables.list",
+    "bigquery.tables.update",
+    "bigquery.tables.delete",
+    "bigquery.tables.getIamPolicy",
+    "bigquery.tables.setIamPolicy",
+    "bigquery.jobs.create",
+    "bigquery.jobs.get",
+    "bigquery.jobs.list",
+    "bigquery.jobs.update",
+    "bigquery.jobs.cancel",
+    # Cloud Storage
+    "storage.buckets.create",
+    "storage.buckets.delete",
+    "storage.buckets.get",
+    "storage.buckets.list",
+    "storage.buckets.update",
+    "storage.buckets.getIamPolicy",
+    "storage.buckets.setIamPolicy",
+    "storage.objects.create",
+    "storage.objects.delete",
+    "storage.objects.get",
+    "storage.objects.list",
+    "storage.objects.update",
+    "storage.objects.getIamPolicy",
+    "storage.objects.setIamPolicy",
+    # Compute Engine
+    "compute.instances.create",
+    "compute.instances.delete",
+    "compute.instances.get",
+    "compute.instances.list",
+    "compute.instances.setMetadata",
+    "compute.instances.setServiceAccount",
+    "compute.instances.start",
+    "compute.instances.stop",
+    "compute.images.create",
+    "compute.images.delete",
+    "compute.images.get",
+    "compute.images.list",
+    "compute.images.setIamPolicy",
+    "compute.images.getIamPolicy",
+    # Cloud SQL
+    "cloudsql.instances.create",
+    "cloudsql.instances.delete",
+    "cloudsql.instances.get",
+    "cloudsql.instances.list",
+    "cloudsql.instances.update",
+    "cloudsql.instances.setIamPolicy",
+    "cloudsql.instances.getIamPolicy",
+    "cloudsql.databases.create",
+    "cloudsql.databases.get",
+    "cloudsql.databases.list",
+    "cloudsql.databases.update",
+    "cloudsql.databases.delete",
+    # Cloud Pub/Sub
+    "pubsub.topics.create",
+    "pubsub.topics.delete",
+    "pubsub.topics.get",
+    "pubsub.topics.list",
+    "pubsub.topics.setIamPolicy",
+    "pubsub.topics.getIamPolicy",
+    "pubsub.topics.publish",
+    "pubsub.subscriptions.create",
+    "pubsub.subscriptions.delete",
+    "pubsub.subscriptions.get",
+    "pubsub.subscriptions.list",
+    "pubsub.subscriptions.pull",
+    "pubsub.subscriptions.setIamPolicy",
+    "pubsub.subscriptions.getIamPolicy",
+    # Cloud Firestore
+    "datastore.entities.create",
+    "datastore.entities.delete",
+    "datastore.entities.get",
+    "datastore.entities.list",
+    "datastore.entities.update",
+    # Cloud Spanner
+    "spanner.databases.create",
+    "spanner.databases.delete",
+    "spanner.databases.get",
+    "spanner.databases.list",
+    "spanner.databases.update",
+    "spanner.databases.setIamPolicy",
+    "spanner.databases.getIamPolicy",
+    # Cloud Logging
+    "logging.logEntries.create",
+    "logging.logEntries.list",
+    "logging.logs.delete",
+    "logging.logs.list",
+}
+
+
+def normalize_and_validate_method(method: str) -> str:
+    """
+    Normalize method name and validate against supported VPC SC methods.
+
+    If method is not in the supported list, returns "*" (all methods).
+
+    Args:
+        method: GCP method name (e.g., "google.cloud.bigquery.v2.JobService.InsertJob")
+
+    Returns:
+        Normalized method or "*" if not supported
+    """
+    if not method:
+        return "*"
+
+    # Extract service and method from various formats
+    # e.g., "google.cloud.bigquery.v2.JobService.InsertJob" -> "bigquery.jobs.insert"
+    method_lower = method.lower()
+
+    # Try to parse the method name
+    # Common pattern: service.resource.action
+    # We'll match if it's in our supported list
+    for supported in SUPPORTED_VPC_SC_METHODS:
+        if supported in method_lower or method_lower in supported:
+            return supported
+
+    # If not found, return wildcard
+    return "*"
+
+
 def parse_audit_log_json(audit_log_text: str) -> Optional[Dict[str, Any]]:
     """
     Parse and validate audit log JSON.
@@ -508,11 +641,14 @@ def generate_hcl_rules(
     service_account = parsed.get('service_account', '')
     caller_ip = parsed.get('caller_ip')
 
+    # Validate and normalize method against supported VPC SC methods
+    validated_method = normalize_and_validate_method(method) if method else "*"
+
     # Build operations dict
     operations = {}
-    if service and method:
+    if service and validated_method:
         operations[service] = {
-            "methods": [method],
+            "methods": [validated_method],
             "permissions": []
         }
 
@@ -567,8 +703,11 @@ def generate_hcl_rules(
 
         # Build to section
         ingress_to = {}
+        # Scenario 4: If destination project not found, use "*" (all resources)
         if dest_project:
             ingress_to["resources"] = [f"projects/{dest_project}"]
+        else:
+            ingress_to["resources"] = ["*"]
         if operations:
             ingress_to["operations"] = operations
 
@@ -595,8 +734,11 @@ def generate_hcl_rules(
             egress_from["identities"] = [f"serviceAccount:{service_account}"]
 
         egress_to = {}
+        # Scenario 4: If destination project not found, use "*" (all resources)
         if dest_project:
             egress_to["resources"] = [f"projects/{dest_project}"]
+        else:
+            egress_to["resources"] = ["*"]
         if operations:
             egress_to["operations"] = operations
 

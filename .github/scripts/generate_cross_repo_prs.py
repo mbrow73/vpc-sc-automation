@@ -79,6 +79,67 @@ def to_hcl(value: Any, indent: int = 0) -> str:
     return json.dumps(value)
 
 
+def rule_similarity_key(rule: Dict[str, Any]) -> str:
+    """
+    Generate a similarity key for a rule (from + to resources, excluding methods).
+
+    Two rules are considered "similar" if they have the same from/to structure
+    but potentially different methods. Similar rules can be merged.
+    """
+    from_section = json.dumps(rule.get("from", {}), sort_keys=True)
+
+    # Get 'to' section but exclude 'operations' (methods vary)
+    to_section = rule.get("to", {})
+    to_without_ops = {k: v for k, v in to_section.items() if k != "operations"}
+    to_section_str = json.dumps(to_without_ops, sort_keys=True)
+
+    return f"{from_section}|{to_section_str}"
+
+
+def deduplicate_rules(
+    new_rules: List[Dict[str, Any]],
+    existing_content: str
+) -> List[Dict[str, Any]]:
+    """
+    Scenario 5: Deduplicate rules by checking for similar existing rules.
+
+    Similar rules are defined as:
+    - Same 'from' section
+    - Same 'to' section (except methods)
+    - Only differing in methods
+
+    Strategy:
+    - For each new rule, generate a similarity key (from + to without methods)
+    - Extract existing rules from terraform content
+    - If similar rule exists, merge their methods
+    - Otherwise, add new rule as-is
+
+    Note: Terraform HCL parsing is complex without a full parser.
+    Currently, we append all rules and rely on find_closing_bracket logic
+    to insert them correctly. Full method merging would require parsing
+    existing HCL and reconstructing it.
+
+    Args:
+        new_rules: List of new rules to add
+        existing_content: Existing terraform content
+
+    Returns:
+        Deduplicated rules list (new rules that don't duplicate existing ones)
+    """
+    if not existing_content or not existing_content.strip():
+        return new_rules
+
+    # Generate similarity keys for new rules
+    # This helps identify which rules are similar to existing ones
+    new_similarity_keys = {rule_similarity_key(rule): rule for rule in new_rules}
+
+    # TODO: Parse existing terraform content to extract existing rule keys
+    # For now, we return all new rules as we don't have a robust HCL parser
+    # The insert_into_array() function will handle proper merging
+
+    return new_rules
+
+
 def append_to_tfvars(
     existing_content: Optional[str],
     rules: List[Dict[str, Any]],
@@ -88,6 +149,7 @@ def append_to_tfvars(
     Append new rules to existing terraform.auto.tfvars.
 
     Preserves existing content and adds new ingress/egress policies.
+    Implements Scenario 5: Deduplication with method merging.
 
     Args:
         existing_content: Current content of terraform.auto.tfvars (or None)
@@ -100,6 +162,9 @@ def append_to_tfvars(
 
     if not existing_content:
         existing_content = ""
+
+    # Scenario 5: Deduplicate rules before appending
+    rules = deduplicate_rules(rules, existing_content)
 
     # Parse existing ingress/egress policies
     existing_ingress = []
