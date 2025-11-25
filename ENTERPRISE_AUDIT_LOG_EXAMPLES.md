@@ -1,14 +1,27 @@
 # Enterprise Audit Log Examples
 
-This document provides comprehensive, **production-realistic** Cloud Audit Log examples that the VPC SC automation system can handle. All examples include the full structure found in actual Google Cloud audit logs.
+This document provides comprehensive, **production-realistic** Cloud Audit Log examples that demonstrate all VPC SC automation features. All examples include the full structure found in actual Google Cloud audit logs.
 
-The system now robustly handles:
-- ✅ Multiple GCP services (BigQuery, Storage, Compute, SQL, Pub/Sub, Dataflow, etc.)
-- ✅ Cross-perimeter violations (with real nested ingressFrom/ingressTo structure)
-- ✅ Complex enterprise scenarios with violation reasons
-- ✅ Real project numbers from vpc_sc_project_cache.json
-- ✅ Full log metadata (logName, insertId, status)
-- ✅ Violation-specific denial reasons (NETWORK_NOT_IN_SERVICE_PERIMETER_ACCESS_LEVEL, etc.)
+## Feature Coverage Matrix
+
+| Example | Service | Direction | Feature(s) Demonstrated | TLM Required |
+|---------|---------|-----------|------------------------|--------------|
+| 1 | BigQuery | INGRESS | Public IP detection, TLM requirement, access level creation | YES |
+| 2 | BigQuery | BOTH | Cross-perimeter INGRESS+EGRESS, direction auto-detection | NO |
+| 3 | Cloud Storage | INGRESS | Private IP, same-perimeter internal access | NO |
+| 4 | Cloud Functions | EGRESS | External destination (unsupported service), wildcard methods | YES |
+| 5 | Cloud SQL | INGRESS | Cross-perimeter, method validation for unsupported service | NO |
+| 6 | Pub/Sub | INGRESS | Supported service with correct method restriction | NO |
+| 7 | Dataflow | INGRESS | Unsupported service → wildcard methods ("*"), internal IP | NO |
+| 8 | Artifact Registry | INGRESS | Supported service, repository-level resources | NO |
+
+**Feature Legend:**
+- **Public IP Detection**: Identifies external callers, triggers TLM requirement
+- **Cross-Perimeter**: Generates BOTH INGRESS+EGRESS rules (Scenario 5)
+- **Method Validation**: Validates against official VPC SC supported methods list
+- **Wildcard Fallback**: Unsupported services use "*" instead of specific methods
+- **Supported Services**: BigQuery, Cloud Storage, Compute, Container Registry, IAM, Cloud Logging, Pub/Sub, Cloud Run, Artifact Registry, Cloud Resource Manager
+- **Unsupported Services**: Cloud SQL, Dataflow, Spanner, Firestore, Cloud Functions (use method="*")
 
 ---
 
@@ -370,12 +383,15 @@ The system now robustly handles:
 ```
 
 **System Detection**:
-- Service: Cloud SQL
+- Service: Cloud SQL (not in VPC SC supported methods list)
 - Direction: INGRESS (to test-perim-a) from test-perim-b
 - Source: Project 2222222223 (test-perim-b)
 - Destination: Project 1111111111 (test-perim-a)
 - Violation Reason: IDENTITY_NOT_IN_SERVICE_PERIMETER
+- **Method Validation**: `cloudsql.instances.get` → **Not supported in VPC SC** → Falls back to `"*"`
+- **Generated Rule**: Method restriction set to `"*"` (all Cloud SQL methods allowed)
 - **TLM Required**: NO (private IP + internal-to-internal)
+- **Note**: Cloud SQL method restrictions are not officially supported by VPC SC. The system safely falls back to allowing all methods.
 
 ---
 
@@ -519,12 +535,17 @@ The system now robustly handles:
 ```
 
 **System Detection**:
-- Service: Dataflow
+- Service: Dataflow (not in VPC SC supported methods list)
 - Direction: INGRESS (to test-perim-b) from test-perim-a
 - Source: test-perim-a (project 1111111112)
 - Destination: test-perim-b (project 2222222223)
 - Violation Reason: IDENTITY_NOT_IN_SERVICE_PERIMETER
-- **Result**: 2 PRs for cross-perimeter access
+- **Method Validation**: `google.dataflow.v1beta3.FlexTemplatesService.LaunchFlexTemplate` → **Not supported in VPC SC** → Falls back to `"*"`
+- **Generated Rules**:
+  - EGRESS from test-perim-a with method restriction `"*"` (all Dataflow methods)
+  - INGRESS to test-perim-b with method restriction `"*"` (all Dataflow methods)
+- **TLM Required**: NO (internal IP + internal-to-internal)
+- **Note**: Dataflow method restrictions are not officially supported by VPC SC. The system automatically falls back to allowing all methods while maintaining identity and resource restrictions.
 
 ---
 
@@ -641,6 +662,21 @@ metadata.ingressViolations / egressViolations:
 
 ---
 
+## Advanced Features Demonstrated
+
+### Scenario 4: Wildcard Projects for Unparseable Resources
+When `targetResource` cannot be parsed to extract a specific project (e.g., organization-level IAM resources), the system automatically uses `"*"` (all resources) instead of failing. This ensures rules are created for edge cases while maintaining safety through identity and method restrictions.
+
+**Example**: `resource: "//cloudresourcemanager.googleapis.com/organizations/123456"` → `resources = ["*"]`
+
+### Scenario 5: Rule Deduplication with Method Merging
+When multiple violations involve the same source identity and destination resource but different methods, the system intelligently deduplicates by merging methods into a single rule instead of creating separate rules.
+
+**Example**:
+- Existing rule: `from: {sa: "user@proj"}, to: {resources: ["projects/*"]}, methods: ["storage.get"]`
+- New violation: Same from/to but needs `storage.list`
+- Result: Single merged rule with `methods: ["storage.get", "storage.list"]`
+
 ## Testing the System
 
 Use any of the above audit logs to test:
@@ -660,9 +696,13 @@ cat rules.json | jq .
 ```
 
 The system will:
-1. Extract all details from realistic Google audit log format
-2. Parse violation reasons (identity type, network type, resource restrictions)
-3. Determine perimeter ownership using project cache
-4. Auto-detect direction based on source/destination
-5. Validate TLM requirements
-6. Generate correct rules for each affected perimeter
+1. **Extract** all details from realistic Google audit log format
+2. **Parse** violation reasons (identity type, network type, resource restrictions)
+3. **Determine** perimeter ownership using project cache
+4. **Auto-detect** direction based on source/destination (Scenario 2: BOTH detection)
+5. **Validate** TLM requirements for public IP INGRESS and all EGRESS to external
+6. **Validate** method against official VPC SC supported list; fallback to "*" if unsupported
+7. **Fallback** to wildcard resources ("*") if project cannot be extracted (Scenario 4)
+8. **Deduplicate** similar rules by method merging (Scenario 5)
+9. **Generate** correct rules for each affected perimeter
+10. **Create** PRs with append-only changes (no destructive modifications)
