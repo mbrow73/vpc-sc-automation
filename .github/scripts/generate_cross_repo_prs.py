@@ -231,16 +231,19 @@ def append_to_tfvars(
                 return f"{policy_name} = [\n{new_rule_hcl},\n]\n"
 
         # Insert before closing bracket
-        # If there's content before the ], add a comma
+        # Check if array is empty by inspecting content between [ and ]
         before_close = content[:end_bracket_pos].rstrip()
         after_close = content[end_bracket_pos:]
 
-        if before_close.endswith(']'):
-            # Empty array
-            return before_close + f"\n{new_rule_hcl},\n{after_close}"
-        else:
-            # Has existing content - add comma and new rules
+        # Determine if array has content by checking what's between the brackets
+        between_brackets = content[start_bracket_pos + 1:end_bracket_pos].strip()
+
+        if between_brackets:
+            # Has existing content - add comma before new rules
             return before_close + f",\n{new_rule_hcl},\n{after_close}"
+        else:
+            # Empty array - no comma needed
+            return before_close.rstrip() + f"\n{new_rule_hcl},\n{after_close}"
 
     result = existing_content.rstrip() if existing_content.strip() else ""
 
